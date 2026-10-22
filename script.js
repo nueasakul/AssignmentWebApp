@@ -1,6 +1,6 @@
 /* ===== CONFIG: ต่อ API Server จริง (Assignment #1) — ถ้าอยากกลับไปใช้ข้อมูลจำลองให้ตั้ง USE_MOCK = true ===== */
 const USE_MOCK = false;
-const API_BASE_URL = "https://assignmentwebapp.onrender.com/"; // ตอน deploy ให้เปลี่ยนเป็น URL ของ API Server บน cloud
+const API_BASE = 'https://assignmentwebapp.onrender.com'; // ตอน deploy ให้เปลี่ยนเป็น URL ของ API Server บน cloud
 const DRONE_ID = "67010999";
 const mockConfig = {drone_id:3001, drone_name:"Dot Dot", light:"on", country:"India", weight:21};
 const mockLogs = Array.from({length:30},(_,i)=>({drone_id:3001,drone_name:"Dot Dot",country:"India",
