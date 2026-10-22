@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Angry Drones – Drone Log</title>
+  <link href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Kanit:wght@400;600&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <div id="scene" aria-hidden="true"></div>
+  <div class="wrap">
+    <header>
+      <div id="logo" style="width:64px;flex:none"></div>
+      <div>
+        <h1>Angry Drones</h1><small>ระบบบันทึกอุณหภูมิโดรน</small>
+      </div>
+    </header>
+    <nav class="tabs" role="tablist" aria-label="เมนูหลัก">
+      <button class="tab" role="tab" id="t1" aria-selected="true" data-p="p1">🎯 Config</button>
+      <button class="tab" role="tab" id="t2" aria-selected="false" data-p="p2">🌡️ Log Form</button>
+      <button class="tab" role="tab" id="t3" aria-selected="false" data-p="p3">📜 Logs</button>
+    </nav>
+    <section class="panel" id="p1" role="tabpanel" aria-labelledby="t1">
+      <h2>ข้อมูล Config ของโดรน</h2>
+      <div class="hero">
+        <div id="heroBird" style="width:84px;flex:none"></div>
+        <div><b id="heroName" style="font-size:1.5rem">กำลังโหลด…</b>
+          <div><span class="pill" id="heroLight"></span></div>
+        </div>
+      </div>
+      <div class="cfg" id="cfgGrid"></div>
+    </section>
+    <section class="panel" id="p2" role="tabpanel" aria-labelledby="t2" hidden>
+      <h2>ส่งค่าอุณหภูมิ</h2>
+      <div class="row">
+        <div class="in">
+          <label for="temp">อุณหภูมิ (°C)</label>
+          <input id="temp" type="number" inputmode="decimal" step="any" min="0" max="80" placeholder="0 - 80">
+
+          <div class="err" id="err" role="alert"></div>
+        </div>
+        <div class="birds" id="birds" aria-hidden="true"></div>
+      </div>
+      <button class="btn" id="send">🚀 Submit data</button>
+    </section>
+    <section class="panel" id="p3" role="tabpanel" aria-labelledby="t3" hidden>
+      <h2>Drone Logs</h2>
+      <div class="tbl">
+        <table>
+          <thead>
+            <tr>
+              <th>Created</th>
+              <th>Country</th>
+              <th>Drone ID</th>
+              <th>Drone Name</th>
+              <th>Celsius</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <div class="pager"><button class="btn" id="prev">◀ ก่อนหน้า</button><span id="pageInfo"></span><button class="btn"
+          id="next">ถัดไป ▶</button></div>
+    </section>
+  </div>
+  <div class="toast" id="toast" role="status"></div>
+  <script src="script.js"></script>
+</body>
+
+</html>
