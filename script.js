@@ -1,5 +1,5 @@
 /* ===== CONFIG: ต่อ API Server (Assignment #1) — ไม่มีข้อมูลสำรองในโค้ด ถ้าเชื่อมต่อไม่ได้จะแจ้งข้อผิดพลาด ===== */
-const API_BASE = 'http://localhost:3000';
+const API_BASE = 'https://assignmentwebapp.onrender.com';
 const DRONE_ID = "67010999";
 const $ = id => document.getElementById(id);
 
