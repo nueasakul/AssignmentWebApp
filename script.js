@@ -8,7 +8,7 @@ const mockLogs = Array.from({length:30},(_,i)=>({drone_id:3001,drone_name:"Dot D
 const wait=ms=>new Promise(r=>setTimeout(r,ms));const $=id=>document.getElementById(id);
 const api={
   async getConfig(){if(USE_MOCK){await wait(400);return {...mockConfig}}const r=await fetch(`${API_BASE}/configs/${DRONE_ID}`);if(!r.ok)throw new Error("โหลด config ไม่สำเร็จ");return r.json()},
-  async getLogs(){if(USE_MOCK){await wait(300);return [...mockLogs].sort((a,b)=>b.created.localeCompare(a.created))}const r=await fetch(`${API_BASE}/logs/${DRONE_ID}`);if(!r.ok)throw new Error("โหลด logs ไม่สำเร็จ");return r.json()},
+  async getLogs(p=1){if(USE_MOCK){await wait(300);return [...mockLogs].sort((a,b)=>b.created.localeCompare(a.created)).slice((p-1)*PER,p*PER)}const r=await fetch(`${API_BASE}/logs/${DRONE_ID}?page=${p}`);if(!r.ok)throw new Error("โหลด logs ไม่สำเร็จ");const d=await r.json();return Array.isArray(d)?d:(d.items||[])},
   async postLog(b){if(USE_MOCK){await wait(400);mockLogs.push({...b,created:new Date().toISOString().replace("T"," ")});return}const r=await fetch(`${API_BASE}/logs`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)});if(!r.ok)throw new Error("ส่งข้อมูลไม่สำเร็จ")}
 };
 
@@ -80,7 +80,7 @@ if(!matchMedia("(prefers-reduced-motion:reduce)").matches){
 }
 
 /* ===== APP ===== */
-let config=null,logs=[],page=0;const PER=12;
+let config=null,logs=[],page=1,hasNext=false;const PER=12;
 document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>{
   document.querySelectorAll(".tab").forEach(x=>x.setAttribute("aria-selected",x===t));
   document.querySelectorAll(".panel").forEach(p=>p.hidden=p.id!==t.dataset.p);
@@ -119,16 +119,19 @@ tin.addEventListener("input",()=>{const v=parseFloat(tin.value);
   else if(!isNaN(v)&&v<0){tin.value=0;$("err").textContent="ต่ำสุด 0 °C"}
   else $("err").textContent="";paint()});
 $("birds").innerHTML=BORD.map((t,i)=>`<div class="b" style="animation-delay:${i*.07}s"><div class="dim">${bird(t)}</div><div class="lit">${bird(t)}</div></div>`).join("");paint();
-async function loadLogs(){
+async function loadLogs(p=1,last=false){
   $("rows").innerHTML='<tr><td colspan="5">กำลังโหลด…</td></tr>';
-  try{logs=await api.getLogs();if(!Array.isArray(logs))logs=[];page=0;renderLogs()}catch(e){$("rows").innerHTML=`<tr><td colspan="5">${e.message}</td></tr>`}
+  try{const d=await api.getLogs(p);
+    if(!d.length&&p>1){toast("ไม่มีข้อมูลหน้าถัดไปแล้ว");return loadLogs(p-1,true)}
+    logs=d;page=p;hasNext=!last&&d.length>=PER;renderLogs()}
+  catch(e){$("rows").innerHTML=`<tr><td colspan="5">${e.message}</td></tr>`}
 }
 function fmtDate(c){const d=new Date(String(c).replace(" ","T"));return isNaN(d)?c:d.toLocaleString("th-TH")}
 function renderLogs(){
-  const pages=Math.max(1,Math.ceil(logs.length/PER)),s=logs.slice(page*PER,page*PER+PER);
+  const s=logs;
   $("rows").innerHTML=s.length?s.map(r=>`<tr><td>${fmtDate(r.created)}</td><td>${r.country}</td><td>${r.drone_id}</td><td>${r.drone_name}</td><td class="${r.celsius>=45?'hot':''}">${r.celsius}</td></tr>`).join(""):'<tr><td colspan="5">ยังไม่มี log — ไปส่งข้อมูลแรกที่หน้า Log Form</td></tr>';
-  $("pageInfo").textContent=`หน้า ${page+1} / ${pages}`;$("prev").disabled=page===0;$("next").disabled=page>=pages-1;
+  $("pageInfo").textContent=`หน้า ${page}`;$("prev").disabled=page<=1;$("next").disabled=!hasNext;
 }
-$("prev").onclick=()=>{page--;renderLogs()};$("next").onclick=()=>{page++;renderLogs()};
+$("prev").onclick=()=>loadLogs(page-1);$("next").onclick=()=>loadLogs(page+1);
 function toast(m){const t=$("toast");t.textContent=m;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2400)}
 loadConfig();
