@@ -2,178 +2,157 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-const PocketBase = require('pocketbase/cjs');
 
 const app = express();
-app.use(cors());
+app.use(cors({ exposedHeaders: ['X-Page', 'X-Per-Page', 'X-Total-Items', 'X-Total-Pages'] }));
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-const pb = new PocketBase('https://app-tracking.pockethost.io');
+const CONFIG_URL = (process.env.CONFIG_URL || '').trim();
+const LOG_URL = (process.env.LOG_URL || '').trim();
+const LOG_API_TOKEN = (process.env.LOG_API_TOKEN || '').trim();
+const PER_PAGE = 12;
 
-// 1. GET /configs/{droneId} - ดึงข้อมูลจาก Server 1
+// Header สำหรับเรียก Drone Log Server (Bearer Token มาจาก .env เท่านั้น)
+function logHeaders() {
+  const h = { 'Content-Type': 'application/json' };
+  if (LOG_API_TOKEN) {
+    h.Authorization = LOG_API_TOKEN.startsWith('Bearer ') ? LOG_API_TOKEN : `Bearer ${LOG_API_TOKEN}`;
+  }
+  return h;
+}
+
+const isId = (v) => /^\d+$/.test(String(v));
+
+// ดึงข้อมูลโดรนจาก Drone Config Server (รองรับ response เป็น array, {data:[...]} หรือ object เดี่ยว)
+const idOf = (i) => (i && typeof i === 'object' ? (i.drone_id ?? i.droneId ?? i.id ?? i.DroneID) : undefined);
+
+// หา "รายการโดรน" ใน response ของ Config Server ไม่ว่าจะเป็น array, {data:[...]}, หรือซ้อนหลายชั้น
+function extractList(data) {
+  const arrays = [];
+  const objs = [];
+  (function walk(v) {
+    if (Array.isArray(v)) { arrays.push(v); v.forEach(walk); }
+    else if (v && typeof v === 'object') {
+      if (idOf(v) !== undefined) objs.push(v);
+      Object.values(v).forEach(walk);
+    }
+  })(data);
+  // เลือก array ที่ข้างในเป็นรายการโดรน (object ที่มี id) ไม่ใช่ array ของชื่อคอลัมน์ ฯลฯ
+  const good = arrays.filter((a) => a.some((i) => i && typeof i === 'object' && !Array.isArray(i) && idOf(i) !== undefined));
+  if (good.length) return good.sort((a, b) => b.length - a.length)[0];
+  return objs;
+}
+
+async function loadDrone(droneId) {
+  if (!CONFIG_URL) throw new Error('CONFIG_URL is not set in .env');
+  const { data } = await axios.get(CONFIG_URL, { timeout: 15000 });
+  const list = extractList(data);
+  return { drone: list.find((i) => String(idOf(i)) === String(droneId)), list };
+}
+
+// ตอบ 404 พร้อมข้อมูลช่วยแก้ปัญหา ว่า Config Server ส่งอะไรกลับมา (ไม่มีข้อมูลปลอม)
+function notFound(res, droneId, list) {
+  console.warn(`Drone ${droneId} not found. Config server returned ${list.length} item(s). First item:`, JSON.stringify(list[0]));
+  return res.status(404).json({
+    error: `Drone ${droneId} not found`,
+    items_from_config_server: list.length,
+    sample_keys: list[0] && typeof list[0] === 'object' ? Object.keys(list[0]) : null,
+    sample_ids: list.slice(0, 20).map(idOf)
+  });
+}
+
+app.get('/', (req, res) => res.send('Drone API is running'));
+
+// 1. GET /configs/:droneId
 app.get('/configs/:droneId', async (req, res) => {
   const { droneId } = req.params;
+  if (!isId(droneId)) return res.status(400).json({ error: 'droneId must be a number' });
   try {
-    const configUrl = (process.env.CONFIG_URL || '').trim();
-    const response = await axios.get(configUrl);
-    const droneList = Array.isArray(response.data) ? response.data : [response.data];
-    
-    let drone = droneList.find(item => String(item.drone_id || item.id) === String(droneId));
-    
-    if (drone) {
-      return res.json({
-        drone_id: Number(drone.drone_id || droneId),
-        drone_name: drone.drone_name || "Opeoid",
-        light: drone.light || "off",
-        country: drone.country || "Peru",
-        weight: Number(drone.weight || 300)
-      });
-    }
-  } catch (error) {
-    console.error('Config Fetch Warning:', error.message);
+    const { drone: d, list } = await loadDrone(droneId);
+    if (!d) return notFound(res, droneId, list);
+    res.json({
+      drone_id: Number(idOf(d)),
+      drone_name: d.drone_name,
+      light: d.light,
+      country: d.country,
+      weight: Number(d.weight)
+    });
+  } catch (err) {
+    console.error('Config fetch error:', err.message);
+    res.status(502).json({ error: 'Cannot reach Drone Config Server', details: err.message });
   }
-
-  // Fallback กรณี Server 1 มีปัญหา ให้แสดงค่าของ ID 67010999
-  res.json({
-    drone_id: Number(droneId),
-    drone_name: "Opeoid",
-    light: "off",
-    country: "Peru",
-    weight: 300
-  });
 });
 
-// 2. GET /status/{droneId} - ดึงสถานะจาก Server 1
+// 2. GET /status/:droneId
 app.get('/status/:droneId', async (req, res) => {
   const { droneId } = req.params;
+  if (!isId(droneId)) return res.status(400).json({ error: 'droneId must be a number' });
   try {
-    const configUrl = (process.env.CONFIG_URL || '').trim();
-    const response = await axios.get(configUrl);
-    const droneList = Array.isArray(response.data) ? response.data : [response.data];
-    const drone = droneList.find(item => String(item.drone_id || item.id) === String(droneId));
-
-    if (drone) {
-      return res.json({ condition: drone.condition || "on-service" });
-    }
-  } catch (error) {
-    console.error('Status Fetch Warning:', error.message);
+    const { drone: d, list } = await loadDrone(droneId);
+    if (!d) return notFound(res, droneId, list);
+    res.json({ condition: d.condition });
+  } catch (err) {
+    console.error('Status fetch error:', err.message);
+    res.status(502).json({ error: 'Cannot reach Drone Config Server', details: err.message });
   }
-
-  res.json({ condition: "on-service" });
 });
 
-// 3. GET /logs/{droneId} - ดึงประวัติ 12 รายการล่าสุดจาก Server 2 (PocketBase)
+// 3. GET /logs/:droneId?page=1  -> ล่าสุดก่อน หน้าละ 12 รายการ
 app.get('/logs/:droneId', async (req, res) => {
+  const { droneId } = req.params;
+  if (!isId(droneId)) return res.status(400).json({ error: 'droneId must be a number' });
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   try {
-    const { droneId } = req.params;
-
-    const resultList = await pb.collection('drone_logs').getList(1, 12, {
-      filter: `drone_id = ${droneId}`,
-      sort: '-created'
+    if (!LOG_URL) throw new Error('LOG_URL is not set in .env');
+    const { data } = await axios.get(LOG_URL, {
+      headers: logHeaders(),
+      params: { page, perPage: PER_PAGE, sort: '-created', filter: `drone_id=${droneId}` },
+      timeout: 15000
     });
-
-    const formattedLogs = resultList.items.map(item => ({
-      drone_id: item.drone_id,
-      drone_name: item.drone_name,
-      created: item.created,
-      country: item.country,
-      celsius: item.celsius
-    }));
-
-    res.json(formattedLogs);
-  } catch (error) {
-    console.error('Logs Fetch Error:', error.message);
-    res.status(500).json({ error: 'Failed to fetch drone logs', details: error.message });
+    res.set({
+      'X-Page': data.page,
+      'X-Per-Page': data.perPage,
+      'X-Total-Items': data.totalItems,
+      'X-Total-Pages': data.totalPages
+    });
+    res.json(
+      data.items.map(({ drone_id, drone_name, created, country, celsius }) => ({
+        drone_id, drone_name, created, country, celsius
+      }))
+    );
+  } catch (err) {
+    console.error('Logs fetch error:', err.message);
+    res.status(502).json({
+      error: 'Failed to fetch drone logs',
+      details: err.response ? err.response.data : err.message
+    });
   }
 });
 
-// 4. POST /logs - บันทึก Log ใหม่ไปยัง Server 2 (PocketBase)
+// 4. POST /logs
 app.post('/logs', async (req, res) => {
+  const { drone_id, drone_name, country, celsius } = req.body || {};
+  const id = Number(drone_id);
+  const temp = Number(celsius);
+  if (Number.isNaN(id) || Number.isNaN(temp) || !drone_name || !country) {
+    return res.status(400).json({ error: 'drone_id, drone_name, country, celsius are required (ids/temps must be numbers)' });
+  }
   try {
-    const { drone_id, drone_name, country, celsius } = req.body;
-
-    console.log('--- Incoming POST Data ---', req.body);
-
-    // 1. ตรวจสอบและแปลงค่าให้อยู่ในรูปแบบที่ถูกต้อง
-    const parsedDroneId = Number(drone_id);
-    const parsedCelsius = Number(celsius);
-
-    if (isNaN(parsedDroneId) || isNaN(parsedCelsius)) {
-      return res.status(400).json({ 
-        error: 'Invalid input: drone_id and celsius must be valid numbers' 
-      });
-    }
-
-    const payload = {
-      drone_id: parsedDroneId,
-      drone_name: String(drone_name || "Opeoid"),
-      country: String(country || "Peru"),
-      celsius: parsedCelsius
-    };
-
-    console.log('Sending payload to PocketBase:', payload);
-
-    // 2. ดึงค่า URL และ Token จาก .env
-    const logUrl = (process.env.LOG_URL || 'https://app-tracking.pockethost.io/api/collections/drone_logs/records').trim();
-    const rawToken = (process.env.LOG_API_TOKEN || '').trim();
-
-    // จัดรูปแบบ Header Authorization
-    const headers = {
-      'Content-Type': 'application/json'
-    };
-
-    if (rawToken) {
-      // หาก Token ยังไม่มีคำว่า Bearer นำหน้า ให้เติม Bearer เข้าไป
-      headers['Authorization'] = rawToken.startsWith('Bearer ') ? rawToken : `Bearer ${rawToken}`;
-    }
-
-    // 3. ยิง Request ไปยัง PocketBase
-    const response = await axios.post(logUrl, payload, { headers });
-
-    console.log('✅ Success! Created Record ID:', response.data.id);
-    res.status(201).json(response.data);
-
-  } catch (error) {
-    console.error('Create Log Error:', error.message);
-
-    // ลองยิงอีกครั้งแบบไม่ใส่ Bearer เผื่อ Token ของอาจารย์เป็น Custom Key
-    if (error.response && error.response.status === 400 && process.env.LOG_API_TOKEN) {
-      try {
-        console.log('Retrying with direct raw token...');
-        const retryRes = await axios.post(
-          (process.env.LOG_URL || 'https://app-tracking.pockethost.io/api/collections/drone_logs/records').trim(),
-          {
-            drone_id: Number(req.body.drone_id),
-            drone_name: String(req.body.drone_name || "Opeoid"),
-            country: String(req.body.country || "Peru"),
-            celsius: Number(req.body.celsius)
-          },
-          {
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': process.env.LOG_API_TOKEN.trim()
-            }
-          }
-        );
-        console.log('✅ Success on retry! Created Record ID:', retryRes.data.id);
-        return res.status(201).json(retryRes.data);
-      } catch (retryErr) {
-        console.error('Retry also failed:', retryErr.message);
-      }
-    }
-
-    if (error.response) {
-      console.error('PocketBase Rejected Details:', JSON.stringify(error.response.data));
-    }
-
-    res.status(500).json({ 
-      error: 'Failed to create drone log', 
-      details: error.response ? error.response.data : error.message 
+    if (!LOG_URL) throw new Error('LOG_URL is not set in .env');
+    const { data } = await axios.post(
+      LOG_URL,
+      { drone_id: id, drone_name: String(drone_name), country: String(country), celsius: temp },
+      { headers: logHeaders(), timeout: 15000 }
+    );
+    res.status(201).json(data);
+  } catch (err) {
+    console.error('Create log error:', err.message, err.response ? JSON.stringify(err.response.data) : '');
+    res.status(502).json({
+      error: 'Failed to create drone log',
+      details: err.response ? err.response.data : err.message
     });
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`API Server is running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`API Server is running on port ${PORT}`));

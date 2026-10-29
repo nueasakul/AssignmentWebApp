@@ -1,15 +1,22 @@
-/* ===== CONFIG: ต่อ API Server จริง (Assignment #1) — ถ้าอยากกลับไปใช้ข้อมูลจำลองให้ตั้ง USE_MOCK = true ===== */
-const USE_MOCK = false;
-const API_BASE = 'https://assignmentwebapp.onrender.com'; // ตอน deploy ให้เปลี่ยนเป็น URL ของ API Server บน cloud
+/* ===== CONFIG: ต่อ API Server (Assignment #1) — ไม่มีข้อมูลสำรองในโค้ด ถ้าเชื่อมต่อไม่ได้จะแจ้งข้อผิดพลาด ===== */
+const API_BASE = 'https://assignmentwebapp.onrender.com';
 const DRONE_ID = "67010999";
-const mockConfig = {drone_id:3001, drone_name:"Dot Dot", light:"on", country:"India", weight:21};
-const mockLogs = Array.from({length:30},(_,i)=>({drone_id:3001,drone_name:"Dot Dot",country:"India",
-  created:new Date(Date.UTC(2026,8,22,7,0,0)+i*3600000).toISOString().replace("T"," "),celsius:30+((i*7)%22)}));
-const wait=ms=>new Promise(r=>setTimeout(r,ms));const $=id=>document.getElementById(id);
+const $=id=>document.getElementById(id);
+
+async function call(path,opt){
+  let r;
+  try{r=await fetch(`${API_BASE}${path}`,opt)}
+  catch(e){throw new Error("เชื่อมต่อ Server ไม่ได้ — ตรวจสอบว่า API Server เปิดอยู่")}
+  if(!r.ok){let m="";try{m=(await r.json()).error||""}catch(_){}
+    throw new Error(r.status===404?"ไม่พบข้อมูลโดรนนี้บน Server":`Server ตอบกลับผิดพลาด (${r.status})${m?": "+m:""}`)}
+  return r;
+}
 const api={
-  async getConfig(){if(USE_MOCK){await wait(400);return {...mockConfig}}const r=await fetch(`${API_BASE}/configs/${DRONE_ID}`);if(!r.ok)throw new Error("โหลด config ไม่สำเร็จ");return r.json()},
-  async getLogs(p=1){if(USE_MOCK){await wait(300);return [...mockLogs].sort((a,b)=>b.created.localeCompare(a.created)).slice((p-1)*PER,p*PER)}const r=await fetch(`${API_BASE}/logs/${DRONE_ID}?page=${p}`);if(!r.ok)throw new Error("โหลด logs ไม่สำเร็จ");const d=await r.json();return Array.isArray(d)?d:(d.items||[])},
-  async postLog(b){if(USE_MOCK){await wait(400);mockLogs.push({...b,created:new Date().toISOString().replace("T"," ")});return}const r=await fetch(`${API_BASE}/logs`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)});if(!r.ok)throw new Error("ส่งข้อมูลไม่สำเร็จ")}
+  async getConfig(){return (await call(`/configs/${DRONE_ID}`)).json()},
+  async getLogs(p=1){const r=await call(`/logs/${DRONE_ID}?page=${p}`),d=await r.json();
+    const tp=parseInt(r.headers.get("X-Total-Pages")),ti=parseInt(r.headers.get("X-Total-Items"));
+    return {items:Array.isArray(d)?d:[],totalPages:isNaN(tp)?null:tp,totalItems:isNaN(ti)?null:ti}},
+  async postLog(b){await call("/logs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)})}
 };
 
 /* ===== SPRITES ===== */
@@ -80,7 +87,7 @@ if(!matchMedia("(prefers-reduced-motion:reduce)").matches){
 }
 
 /* ===== APP ===== */
-let config=null,logs=[],page=1,hasNext=false;const PER=12;
+let config=null,logs=[],page=1,hasNext=false,totalPages=null,totalItems=null;const PER=12;
 document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>{
   document.querySelectorAll(".tab").forEach(x=>x.setAttribute("aria-selected",x===t));
   document.querySelectorAll(".panel").forEach(p=>p.hidden=p.id!==t.dataset.p);
@@ -89,10 +96,11 @@ document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>{
 async function loadConfig(){
   try{config=await api.getConfig();
     $("heroName").textContent=config.drone_name;
-    const l=$("heroLight");l.textContent="Light: "+config.light;l.classList.toggle("off",config.light!=="on");
+    const l=$("heroLight");l.style.display="";l.textContent="Light: "+config.light;l.classList.toggle("off",config.light!=="on");
     $("cfgGrid").innerHTML=[["Drone ID",config.drone_id],["Drone Name",config.drone_name],["Light",config.light],["Country",config.country]]
       .map(([k,v])=>`<div class="item"><span>${k}</span><b>${String(v).replace(/</g,"&lt;")}</b></div>`).join("");
-  }catch(e){$("heroName").textContent="โหลดไม่สำเร็จ";toast(e.message)}
+  }catch(e){config=null;$("heroName").textContent="โหลดข้อมูลไม่ได้";$("heroLight").style.display="none";
+    $("cfgGrid").innerHTML=`<div class="item" style="grid-column:1/-1"><b>⚠️ ${e.message}</b></div>`;toast(e.message)}
 }
 const tiltSel=".btn,.tab";
 document.addEventListener("pointermove",e=>{const c=e.target.closest&&e.target.closest(tiltSel);if(!c||c.disabled)return;const r=c.getBoundingClientRect();
@@ -122,15 +130,16 @@ $("birds").innerHTML=BORD.map((t,i)=>`<div class="b" style="animation-delay:${i*
 async function loadLogs(p=1,last=false){
   $("rows").innerHTML='<tr><td colspan="5">กำลังโหลด…</td></tr>';
   try{const d=await api.getLogs(p);
-    if(!d.length&&p>1){toast("ไม่มีข้อมูลหน้าถัดไปแล้ว");return loadLogs(p-1,true)}
-    logs=d;page=p;hasNext=!last&&d.length>=PER;renderLogs()}
-  catch(e){$("rows").innerHTML=`<tr><td colspan="5">${e.message}</td></tr>`}
+    if(!d.items.length&&p>1){toast("ไม่มีข้อมูลหน้าถัดไปแล้ว");return loadLogs(p-1,true)}
+    logs=d.items;page=p;totalPages=d.totalPages;totalItems=d.totalItems;
+    hasNext=!last&&(totalPages!==null?p<totalPages:d.items.length>=PER);renderLogs()}
+  catch(e){$("rows").innerHTML=`<tr><td colspan="5">⚠️ ${e.message}</td></tr>`;$("pageInfo").textContent="";$("prev").disabled=$("next").disabled=true}
 }
 function fmtDate(c){const d=new Date(String(c).replace(" ","T"));return isNaN(d)?c:d.toLocaleString("th-TH")}
 function renderLogs(){
   const s=logs;
   $("rows").innerHTML=s.length?s.map(r=>`<tr><td>${fmtDate(r.created)}</td><td>${r.country}</td><td>${r.drone_id}</td><td>${r.drone_name}</td><td class="${r.celsius>=45?'hot':''}">${r.celsius}</td></tr>`).join(""):'<tr><td colspan="5">ยังไม่มี log — ไปส่งข้อมูลแรกที่หน้า Log Form</td></tr>';
-  $("pageInfo").textContent=`หน้า ${page}`;$("prev").disabled=page<=1;$("next").disabled=!hasNext;
+  $("pageInfo").textContent=`หน้า ${page}${totalPages?` / ${totalPages}`:""}${totalItems!==null?` (ทั้งหมด ${totalItems} รายการ)`:""}`;$("prev").disabled=page<=1;$("next").disabled=!hasNext;
 }
 $("prev").onclick=()=>loadLogs(page-1);$("next").onclick=()=>loadLogs(page+1);
 function toast(m){const t=$("toast");t.textContent=m;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2400)}
